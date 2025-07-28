@@ -2,6 +2,7 @@ smartapi-python
 pycryptodome
 pyotp
 logzero
+websocket-client
 pandas
 requests
 flask

@@ -3,16 +3,15 @@ import pandas as pd
 import ta
 from datetime import datetime, timedelta
 from flask import Flask, request, render_template_string
+import os
 
 app = Flask(__name__)
 
-# Nifty 500 list – can be updated
+# Nifty 500 list – add more symbols if needed
 NIFTY_500 = [
     "ICICIBANK.NS", "TORNTPHARM.NS", "HDFCBANK.NS", "RELIANCE.NS", "TCS.NS"
-    # Add more if needed
 ]
 
-# Scanner logic
 def get_bounce_stocks(timeframe, backtest_bars=50):
     results = []
     for symbol in NIFTY_500:
@@ -34,7 +33,6 @@ def get_bounce_stocks(timeframe, backtest_bars=50):
             bounces = {'20': [], '50': []}
             for i in range(len(df) - backtest_bars, len(df)):
                 row = df.iloc[i]
-                prev = df.iloc[i - 1]
 
                 is_green = row['Close'] > row['Open']
                 touch_20 = row['Low'] <= row['sma20'] <= row['High']
@@ -55,7 +53,6 @@ def get_bounce_stocks(timeframe, backtest_bars=50):
                     if len(bounces['50']) == 0 or row['Low'] > bounces['50'][-1]['low']:
                         bounces['50'].append({'index': df.index[i], 'low': row['Low']})
 
-            # Logic: At least 2 bounces (either SMA, not necessarily same)
             total_bounces = len(bounces['20']) + len(bounces['50'])
             if total_bounces >= 2:
                 last = df.iloc[-1]
@@ -73,7 +70,6 @@ def get_bounce_stocks(timeframe, backtest_bars=50):
 
     return results
 
-# Web interface
 @app.route('/')
 def index():
     timeframe = request.args.get('timeframe', '15min')
@@ -83,7 +79,8 @@ def index():
     <head><title>Bounce Scanner</title></head>
     <body style="font-family:Arial">
         <h2>📈 Intraday Bounce Scanner ({{ timeframe }})</h2>
-        <a href="/?timeframe=15min">15min</a> | <a href="/?timeframe=30min">30min</a><br><br>
+        <a href="/?timeframe=15min">15min</a> | 
+        <a href="/?timeframe=30min">30min</a><br><br>
         <table border="1" cellpadding="6" cellspacing="0">
             <tr>
                 <th>Symbol</th><th>Time</th><th>Price</th><th>Chart</th>
@@ -105,4 +102,5 @@ def index():
     """, data=data, timeframe=timeframe)
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)

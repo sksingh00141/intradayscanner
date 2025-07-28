@@ -1,4 +1,5 @@
-SmartApi
+smartapi-python
+pycryptodome
 pyotp
 pandas
 requests

@@ -1,64 +1,95 @@
 import os
 import pandas as pd
-import datetime as dt
-from SmartApi import SmartConnect
 import pyotp
+from SmartApi import SmartConnect
+from datetime import datetime, timedelta
+import streamlit as st
 
-# 🔹 Take credentials from Render environment variables
+# ------------------ CONFIG ------------------ #
 API_KEY = os.getenv("API_KEY")
 CLIENT_ID = os.getenv("CLIENT_ID")
 PASSWORD = os.getenv("PASSWORD")
-ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")  # ✅ Access Token from Render Env
+TOTP_SECRET = os.getenv("TOTP_SECRET")
 
-# 🔹 Connect to AngelOne API
+ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")  # For Render env
 obj = SmartConnect(api_key=API_KEY)
 obj.setAccessToken(ACCESS_TOKEN)
 
-# 🔹 Fetch historical data function
-def fetch_historical(symbol_token, interval, from_date, to_date):
-    params = {
-        "exchange": "NSE",
-        "symboltoken": symbol_token,
-        "interval": interval,
-        "fromdate": from_date.strftime("%Y-%m-%d %H:%M"),
-        "todate": to_date.strftime("%Y-%m-%d %H:%M"),
-    }
-    return obj.getCandleData(params)
+# -------------- FETCH HISTORICAL DATA -------------- #
+def get_historical_data(symbol, from_date, to_date, interval="FIFTEEN_MINUTE"):
+    try:
+        params = {
+            "exchange": "NSE",
+            "symboltoken": symbol,
+            "interval": interval,
+            "fromdate": from_date.strftime("%Y-%m-%d %H:%M"),
+            "todate": to_date.strftime("%Y-%m-%d %H:%M")
+        }
+        data = obj.getCandleData(params)
+        df = pd.DataFrame(data['data'], columns=["datetime","open","high","low","close","volume"])
+        df["datetime"] = pd.to_datetime(df["datetime"])
+        return df
+    except:
+        return pd.DataFrame()
 
-# 🔹 Bounce detection function
-def is_bounce(df):
+# -------------- DETECT BOUNCE PATTERN -------------- #
+def detect_bounce(df):
     df["SMA20"] = df["close"].rolling(20).mean()
     df["SMA50"] = df["close"].rolling(50).mean()
 
-    bounces = []
+    results = []
+    last_bounce_20 = None
+    last_bounce_50 = None
+
     for i in range(50, len(df)):
-        candle = df.iloc[i]
-        prev = df.iloc[i - 1]
+        row = df.iloc[i]
+        if row["close"] > row["open"]:  # Green candle
+            # Check if candle touched SMA20 or SMA50
+            bounce_20 = row["low"] <= row["SMA20"] <= row["high"]
+            bounce_50 = row["low"] <= row["SMA50"] <= row["high"]
 
-        if candle["close"] > candle["open"] and (
-            candle["low"] <= candle["SMA20"] <= candle["close"]
-            or candle["low"] <= candle["SMA50"] <= candle["close"]
-        ):
-            if candle["SMA20"] > prev["SMA20"] and candle["SMA50"] > prev["SMA50"]:
-                bounces.append(df.iloc[i])
+            if bounce_20:
+                if last_bounce_20 is None or row["low"] > last_bounce_20:
+                    results.append(row["datetime"])
+                    last_bounce_20 = row["low"]
 
-    return bounces
+            if bounce_50:
+                if last_bounce_50 is None or row["low"] > last_bounce_50:
+                    results.append(row["datetime"])
+                    last_bounce_50 = row["low"]
+    return results
 
-# 🔹 Example usage
-if __name__ == "__main__":
-    symbol_token = "3045"  # Example: ICICI Bank token
-    from_date = dt.datetime.now() - dt.timedelta(days=10)
-    to_date = dt.datetime.now()
+# -------------- STREAMLIT UI -------------- #
+st.title("📈 Intraday Bounce Scanner")
 
-    data = fetch_historical(symbol_token, "FIFTEEN_MINUTE", from_date, to_date)
+mode = st.radio("Select Mode", ["Live Mode", "Backtest Mode"])
 
-    if "data" in data:
-        candles = data["data"]
-        df = pd.DataFrame(candles, columns=["datetime", "open", "high", "low", "close", "volume"])
-        df["datetime"] = pd.to_datetime(df["datetime"])
+if mode == "Backtest Mode":
+    from_date = st.date_input("From Date", datetime.now() - timedelta(days=7))
+    to_date = st.date_input("To Date", datetime.now())
 
-        results = is_bounce(df)
-        for r in results:
-            print(r)
-    else:
-        print("Error fetching data:", data)
+    if st.button("Run Backtest"):
+        stocks = ["ICICIBANK-EQ", "TCS-EQ", "HDFCBANK-EQ"]  # You can add more
+        final_results = []
+
+        for stock in stocks:
+            df = get_historical_data(stock, from_date, to_date)
+            if df.empty:
+                continue
+            bounces = detect_bounce(df)
+            if bounces:
+                dates = [d.strftime("%d-%b") for d in bounces]
+                final_results.append({"Stock": stock, "Bounce Count": len(bounces), "Bounce Dates": ", ".join(dates)})
+
+        if final_results:
+            result_df = pd.DataFrame(final_results)
+            st.dataframe(result_df)
+
+            # Export to CSV
+            csv = result_df.to_csv(index=False)
+            st.download_button("📥 Download CSV", csv, "backtest_results.csv", "text/csv")
+        else:
+            st.warning("⚠️ No bounce patterns found in this date range!")
+
+else:
+    st.info("Live Mode is under setup. It will fetch latest data with bounce detection.")

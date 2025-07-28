@@ -1,6 +1,7 @@
 smartapi-python
 pycryptodome
 pyotp
+logzero
 pandas
 requests
 flask

@@ -1,40 +1,64 @@
 import os
 import pandas as pd
+import datetime as dt
 from SmartApi import SmartConnect
+import pyotp
 
-# ✅ API credentials from environment variables
-API_KEY = os.getenv("API_KEY")              # Add API_KEY in Render environment variables
-CLIENT_ID = os.getenv("CLIENT_ID")          # Add CLIENT_ID in Render environment variables
-PASSWORD = os.getenv("PASSWORD")            # Add PASSWORD in Render environment variables
-ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")    # Add ACCESS_TOKEN in Render environment variables
+# 🔹 Take credentials from Render environment variables
+API_KEY = os.getenv("API_KEY")
+CLIENT_ID = os.getenv("CLIENT_ID")
+PASSWORD = os.getenv("PASSWORD")
+ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")  # ✅ Access Token from Render Env
 
-# ✅ Initialize SmartConnect
+# 🔹 Connect to AngelOne API
 obj = SmartConnect(api_key=API_KEY)
 obj.setAccessToken(ACCESS_TOKEN)
 
-# 🔹 Example function to fetch historical data
-def get_historical_data(symboltoken, interval, fromdate, todate):
-    try:
-        params = {
-            "exchange": "NSE",
-            "symboltoken": symboltoken,
-            "interval": interval,
-            "fromdate": fromdate,
-            "todate": todate
-        }
-        data = obj.getCandleData(params)
-        df = pd.DataFrame(data["data"], columns=["date", "open", "high", "low", "close", "volume"])
-        return df
-    except Exception as e:
-        print("Error fetching data:", e)
-        return None
+# 🔹 Fetch historical data function
+def fetch_historical(symbol_token, interval, from_date, to_date):
+    params = {
+        "exchange": "NSE",
+        "symboltoken": symbol_token,
+        "interval": interval,
+        "fromdate": from_date.strftime("%Y-%m-%d %H:%M"),
+        "todate": to_date.strftime("%Y-%m-%d %H:%M"),
+    }
+    return obj.getCandleData(params)
+
+# 🔹 Bounce detection function
+def is_bounce(df):
+    df["SMA20"] = df["close"].rolling(20).mean()
+    df["SMA50"] = df["close"].rolling(50).mean()
+
+    bounces = []
+    for i in range(50, len(df)):
+        candle = df.iloc[i]
+        prev = df.iloc[i - 1]
+
+        if candle["close"] > candle["open"] and (
+            candle["low"] <= candle["SMA20"] <= candle["close"]
+            or candle["low"] <= candle["SMA50"] <= candle["close"]
+        ):
+            if candle["SMA20"] > prev["SMA20"] and candle["SMA50"] > prev["SMA50"]:
+                bounces.append(df.iloc[i])
+
+    return bounces
 
 # 🔹 Example usage
 if __name__ == "__main__":
-    symboltoken = "3045"  # Example token (RELIANCE)
-    df = get_historical_data(symboltoken, "FIFTEEN_MINUTE", "2025-07-15 09:15", "2025-07-26 15:30")
-    
-    if df is not None:
-        print(df.head())
+    symbol_token = "3045"  # Example: ICICI Bank token
+    from_date = dt.datetime.now() - dt.timedelta(days=10)
+    to_date = dt.datetime.now()
+
+    data = fetch_historical(symbol_token, "FIFTEEN_MINUTE", from_date, to_date)
+
+    if "data" in data:
+        candles = data["data"]
+        df = pd.DataFrame(candles, columns=["datetime", "open", "high", "low", "close", "volume"])
+        df["datetime"] = pd.to_datetime(df["datetime"])
+
+        results = is_bounce(df)
+        for r in results:
+            print(r)
     else:
-        print("No data received")
+        print("Error fetching data:", data)

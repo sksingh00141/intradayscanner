@@ -1,4 +1,5 @@
+SmartApi
+pyotp
 pandas
-yfinance
+requests
 flask
-ta
